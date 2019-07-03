@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8"/>
+	<script
+			  src="jquery-1.12.4.min.js"
+			  integrity="sha256-ZosEbRLbNQzLpnKIkEdrPv7lOy9C27hHQ+Xp8a4MxAQ="
+			  crossorigin="anonymous"></script><title>2d Lighting</title>
+	<script type="text/javascript">
+var ctx;
+var canvas;
+var paused = false;
+var lastFrameTime;
+
+var keyDown = [];
+
+var mouse = {x: 0, y: 0};
+
+// TODO: maybe storing lists of points in polygons is easier?
+var lines = [
+	{x1: 10, y1: 10, x2: 630, y2: 10},
+	{x1: 630, y1: 10, x2: 630, y2: 470},
+	{x1: 10, y1: 470, x2: 630, y2: 470},
+	{x1: 10, y1: 10, x2: 10, y2: 470},
+	{x1: 100, y1: 100, x2: 200, y2: 70},
+	{x1: 170, y1: 130, x2: 200, y2: 70},
+	{x1: 100, y1: 100, x2: 170, y2: 130},
+	{x1: 400, y1: 300, x2: 570, y2: 230},
+	{x1: 500, y1: 300, x2: 570, y2: 230},
+	{x1: 500, y1: 300, x2: 510, y2: 270},
+	{x1: 510, y1: 270, x2: 400, y2: 300},
+];
+
+var pts = [];
+
+var lightingPolygon = [];
+
+for (let line of lines) {
+	let pt1 = {x: line.x1, y: line.y1};
+	let pt2 = {x: line.x2, y: line.y2};
+
+	if (!pts.some(pt => (pt.x == pt1.x && pt.y == pt1.y))) pts.push(pt1);
+	if (!pts.some(pt => (pt.x == pt2.x && pt.y == pt2.y))) pts.push(pt2);
+}
+
+function isKeyDown(keycode) {
+	return keyDown[keycode];
+}
+
+function update(delta) {
+
+}
+
+// expects ray as {x, y, dx, dy}
+// expects line segment as {x, y, dx, dy}
+// returns t1 (not exactly the modular choice but)
+function intersect(ray, segment) {
+	// TODO check for parallel
+	let t2 = (ray.dx * (segment.y - ray.y) + ray.dy * (ray.x - segment.x)) / (segment.dx * ray.dy - segment.dy * ray.dx);
+	let t1 = (segment.x + segment.dx * t2 - ray.x) / ray.dx; // TODO what if dx == 0?
+	if (t1 >= 0 && t2 >= 0 && t2 <= 1) {
+		return t1;
+	}
+	return null;
+}
+
+function angleOffsetRay(ray, dangle) {
+	let magnitude = Math.sqrt(Math.pow(ray.dx, 2) + Math.pow(ray.dy, 2));
+	let angle = Math.atan2(ray.dx, ray.dy) + dangle;
+	return {x: ray.x, y: ray.y, dx: magnitude * Math.sin(angle), dy: magnitude * Math.cos(angle)};
+}
+
+function raycast(ray, lines) {
+	let min_t1 = Infinity;
+
+	for (let line of lines) {
+		let t1 = intersect(ray, {x: line.x1, y: line.y1, dx: line.x2 - line.x1, dy: line.y2 - line.y1});
+
+		if (t1 != null && t1 < min_t1) {
+			min_t1 = t1;
+		}
+	}
+
+	// TODO what if unbounded? canvas edge or something?
+	if (min_t1 == Infinity) return null;
+	return {x: ray.x + ray.dx * min_t1, y: ray.y + ray.dy * min_t1};
+}
+
+// TODO parameterize
+function calculateLightPolygon() {
+	let intersections = [];
+
+	let ray_x = mouse.x;
+	let ray_y = mouse.y;
+
+	for (let pt of pts) {
+		let ray = {x: ray_x, y: ray_y, dx: pt.x - ray_x, dy: pt.y - ray_y};
+		let rays = [angleOffsetRay(ray, -0.00001), ray, angleOffsetRay(ray, 0.00001)];
+
+		for (let r of rays) {
+			let result = raycast(r, lines);
+			if (result != null) intersections.push(result);
+		}
+	}
+
+	// sort intersections
+	intersections.sort((a, b) => (Math.atan2(b.x - ray_x, b.y - ray_y) - Math.atan2(a.x - ray_x, a.y - ray_y)));
+	return intersections;
+}
+
+function drawBackground() {
+	ctx.fillStyle="#08327d";
+	ctx.fillRect(0, 0, 640, 480);
+}
+
+function drawLines() {
+	ctx.strokeStyle = "#fbfbfb";
+	for (let line of lines) {
+		ctx.beginPath();
+		ctx.moveTo(line.x1, line.y1);
+		ctx.lineTo(line.x2, line.y2);
+		ctx.stroke();
+	}
+}
+
+function drawLighting() {
+	ctx.fillStyle="#558a86";
+	if (lightingPolygon.length >= 1) {
+		ctx.beginPath();
+		ctx.moveTo(lightingPolygon[0].x, lightingPolygon[0].y);
+		for (let i = 1; i < lightingPolygon.length; i++) {
+			ctx.lineTo(lightingPolygon[i].x, lightingPolygon[i].y);
+		}
+		ctx.fill();
+	}
+}
+
+function render() {
+	drawBackground();
+	drawLines();
+	drawLighting();
+}
+
+function frame() {
+	var delta = Date.now() - lastFrameTime;
+	if (!paused) {
+		update(delta);
+	}
+	render();
+	lastFrameTime = Date.now();
+	window.requestAnimationFrame(frame);
+}
+
+function initialize() {
+	canvas = document.getElementById("myCanvas");
+
+	canvas.addEventListener('mousemove', function(event) {
+		mouse.x = event.offsetX;
+		mouse.y = event.offsetY;
+		lightingPolygon = calculateLightPolygon();
+	});
+
+	ctx = canvas.getContext("2d");
+	lastFrameTime = Date.now();
+	window.requestAnimationFrame(frame);
+}
+
+$(document).keydown(function(event) {
+	var keycode = event.keyCode ? event.keyCode : event.which;
+	keyDown[keycode] = true;
+});
+
+$(document).keyup(function(event) {
+	var keycode = event.keyCode ? event.keyCode : event.which;
+	keyDown[keycode] = false;
+});
+	</script>
+</head>
+<body onload="initialize();">
+	<canvas id="myCanvas" width="640" height="480" style="border: 1px solid black;"/>
+</body>
+</html>
